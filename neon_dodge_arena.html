@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neon Dodge Arena</title>
+<style>
+html,body{margin:0;padding:0;background:#05060a;color:#e6f1ff;font-family:system-ui;height:100%;overflow:hidden;}
+canvas{display:block;}
+#ui{position:fixed;inset:0;pointer-events:none;}
+.panel{pointer-events:auto;position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+background:rgba(10,14,28,.95);border:1px solid rgba(0,200,255,.3);border-radius:16px;padding:20px;
+box-shadow:0 20px 60px rgba(0,0,0,.7);text-align:center;}
+button,select{padding:10px 16px;border-radius:999px;border:none;background:linear-gradient(180deg,#0ef,#08b);
+font-weight:700;cursor:pointer;margin:4px;}
+#hud{position:absolute;top:10px;left:10px;display:flex;gap:8px;}
+.chip{background:rgba(0,0,0,.5);border:1px solid rgba(0,200,255,.3);border-radius:999px;padding:6px 10px;font-weight:700;}
+#shopBtn{position:absolute;right:10px;top:10px;pointer-events:auto;}
+#shop{position:absolute;right:10px;top:280px;display:none;max-width:260px;max-height:70vh;overflow-y:auto;}
+hr{border:1px solid rgba(0,200,255,.2);}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+
+<!-- MUSIC -->
+<audio id="bgMusic" src="https://cdn.pixabay.com/download/audio/2023/02/14/audio_3f72c1f6f2.mp3?filename=arcade-background-11267.mp3" loop></audio>
+<audio id="shootSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_ef9f0c9a2f.mp3?filename=laser-6-109398.mp3"></audio>
+
+<div id="ui">
+<div id="menu" class="panel">
+<h1>⚡ NEON DODGE ARENA ⚡</h1>
+<p>WASD / Arrow Keys • Mouse to Shoot</p>
+<select id="difficulty">
+<option value="easy">Easy</option>
+<option value="medium" selected>Medium</option>
+<option value="hard">Hard</option>
+<option value="superhard">Super Hard</option>
+</select><br><br>
+<button id="start">START</button>
+</div>
+
+<div id="hud">
+<div class="chip" id="score">Score: 0</div>
+<div class="chip" id="coins">Coins: 0</div>
+<div class="chip" id="hp">HP: 3/3</div>
+</div>
+
+<button id="shopBtn">SHOP</button>
+<div id="shop" class="panel">
+<h3>UPGRADES</h3>
+<button id="upSpeed">Speed + (20)</button>
+<button id="upFire">Fire Rate + (25)</button>
+<button id="upDamage">Damage + (30)</button>
+<button id="upHP">Max HP + (40)</button>
+<hr>
+<h3>WEAPONS</h3>
+<button id="wpPistol">🔫 Pistol (Free)</button>
+<button id="wpShotgun">💥 Shotgun (120)</button>
+<button id="wpLaser">⚡ Laser (200)</button>
+<button id="wpExplosive">💣 Explosive (250)</button>
+<button id="wpSniper">🎯 Sniper Rifle (3000)</button>
+<hr>
+<h3>SKINS</h3>
+<button id="skinRainbow">🌈 Rainbow (150)</button>
+<button id="skinPlasma">🔥 Plasma (200)</button>
+<button id="skinGold">👑 Gold (300)</button>
+<br><br>
+<button id="closeShop">Close</button>
+</div>
+</div>
+
+<script>
+// ================= INPUT =================
+const keys = {};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if(e.key.includes('Arrow')) e.preventDefault() });
+addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+const mouse = {x:0, y:0, down:false, rightDown:false};
+addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+addEventListener('mousedown', e=>{ if(e.button===0) mouse.down=true; if(e.button===2) mouse.rightDown=true; });
+addEventListener('mouseup', e=>{ if(e.button===0) mouse.down=false; if(e.button===2) mouse.rightDown=false; });
+addEventListener('contextmenu', e=>e.preventDefault()); // disable right click menu
+
+// ================= CANVAS =================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W,H;
+function resize(){ W=canvas.width=innerWidth; H=canvas.height=innerHeight; }
+addEventListener('resize', resize); resize();
+
+// ================= GAME STATE =================
+let running=false, score=0, coins=0;
+let difficulty='medium', diffMul=1;
+let enemies=[], bullets=[], bosses=[], enemyBullets=[];
+let nextBossScore = 500;
+
+const player={
+  x:W/2, y:H/2, r:10,
+  speed:4, fireRate:15, fireCd:0,
+  damage:1, hp:3, maxHp:3,
+  weapon:'pistol', skin:'normal'
+};
+
+function applyDifficulty(){
+  if(difficulty==='easy') diffMul=0.7;
+  else if(difficulty==='medium') diffMul=1;
+  else if(difficulty==='hard') diffMul=1.4;
+  else if(difficulty==='superhard') diffMul=2;
+}
+
+// ================= SPAWN =================
+function spawnEnemy(){
+  enemies.push({ x:Math.random()*W, y:Math.random()*H, r:14, sp:1.2*diffMul, hp:3 });
+}
+
+function spawnBoss(){
+  const t = Math.floor(Math.random()*3);
+  let hpMultiplier = difficulty==='superhard'?2:1;
+  let spMultiplier = difficulty==='superhard'?1.5:1;
+  let fireMultiplier = difficulty==='superhard'?0.5:1;
+  
+  if(t===0) bosses.push({ type:'tank', x:Math.random()*W, y:Math.random()*H, r:45, sp:0.45*spMultiplier, hp:120*hpMultiplier, maxHp:120*hpMultiplier });
+  if(t===1) bosses.push({ type:'rusher', x:Math.random()*W, y:Math.random()*H, r:30, sp:1.1*spMultiplier, burst:0, hp:60*hpMultiplier, maxHp:60*hpMultiplier });
+  if(t===2) bosses.push({ type:'shooter', x:Math.random()*W, y:Math.random()*H, r:34, sp:0.8*spMultiplier, fireCd:0, hp:80*hpMultiplier, maxHp:80*hpMultiplier, fireMultiplier:fireMultiplier });
+}
+
+// ================= SHOOT =================
+function shoot(){
+  if(player.fireCd>0) return;
+
+  const dx = mouse.x - player.x, dy = mouse.y - player.y;
+  const d = Math.hypot(dx, dy)||1;
+
+  if(player.weapon==='pistol') bullets.push({x:player.x,y:player.y,vx:dx/d*8,vy:dy/d*8});
+  if(player.weapon==='shotgun') for(let i=-2;i<=2;i++){ const a=Math.atan2(dy,dx)+i*0.2; bullets.push({x:player.x,y:player.y,vx:Math.cos(a)*7,vy:Math.sin(a)*7}); }
+  if(player.weapon==='laser') bullets.push({x:player.x,y:player.y,vx:dx/d*14,vy:dy/d*14,pierce:true});
+  if(player.weapon==='explosive') bullets.push({x:player.x,y:player.y,vx:dx/d*6,vy:dy/d*6});
+  if(player.weapon==='sniper') bullets.push({x:player.x,y:player.y,vx:dx/d*25,vy:dy/d*25,sniper:true});
+
+  player.fireCd = player.fireRate;
+
+  const shootAudio = document.getElementById('shootSound');
+  shootAudio.currentTime=0;
+  shootAudio.play();
+}
+
+// ================= UPDATE =================
+function update(){
+  if(!running) return;
+  score++; coins+=0.15;
+
+  if(score>=nextBossScore && bosses.length===0){ spawnBoss(); nextBossScore+=500; }
+
+  if(Math.random()<0.02*diffMul) spawnEnemy();
+
+  const ax=(keys.a||keys.arrowleft?-1:0)+(keys.d||keys.arrowright?1:0);
+  const ay=(keys.w||keys.arrowup?-1:0)+(keys.s||keys.arrowdown?1:0);
+  const m=Math.hypot(ax,ay)||1;
+  player.x+=ax/m*player.speed;
+  player.y+=ay/m*player.speed;
+
+  if(mouse.down) shoot();
+  if(player.fireCd>0) player.fireCd--;
+
+  bullets.forEach(b=>{ b.x+=b.vx; b.y+=b.vy; });
+
+  // ----- BOSSES -----
+  bosses.forEach(b=>{
+    const dx = player.x - b.x, dy = player.y - b.y, d=Math.hypot(dx,dy)||1;
+
+    if(b.type==='tank'){ b.x+=dx/d*b.sp; b.y+=dy/d*b.sp; }
+    if(b.type==='rusher'){ b.burst--; const speed=b.burst>0?3:1; if(b.burst<=-120) b.burst=60; b.x+=dx/d*b.sp*speed; b.y+=dy/d*b.sp*speed; }
+    if(b.type==='shooter'){ 
+      if(d<220){ b.x-=dx/d*b.sp; b.y-=dy/d*b.sp; } 
+      b.fireCd -= b.fireMultiplier || 1;
+      if(b.fireCd<=0){ enemyBullets.push({x:b.x,y:b.y,vx:dx/d*5,vy:dy/d*5}); b.fireCd=50*(b.fireMultiplier||1); } 
+    }
+
+    bullets.forEach(bu=>{
+      if(Math.hypot(bu.x-b.x,bu.y-b.y) < b.r){
+        if(bu.sniper){ b.hp=0; bu.dead=true; coins+=500; } 
+        else { b.hp-=player.damage; if(!bu.pierce) bu.dead=true; if(b.hp<=0){ b.dead=true; coins+=500; } }
+      }
+    });
+
+    if(d<b.r+player.r) player.hp-=1;
+  });
+
+  // ----- ENEMIES -----
+  enemies.forEach(e=>{
+    const dx = player.x - e.x, dy = player.y - e.y, d=Math.hypot(dx,dy)||1;
+    e.x+=dx/d*e.sp; e.y+=dy/d*e.sp;
+    bullets.forEach(b=>{ if(Math.hypot(b.x-e.x,b.y-e.y)<e.r){ e.hp-=player.damage; b.dead=true; if(e.hp<=0){ e.dead=true; coins+=3; } } });
+    if(d<e.r+player.r){player.hp--; e.dead=true;}
+  });
+
+  // ----- ENEMY BULLETS -----
+  enemyBullets.forEach(b=>{ b.x+=b.vx; b.y+=b.vy; if(Math.hypot(b.x-player.x,b.y-player.y)<player.r){player.hp--; b.dead=true;} });
+
+  enemies=enemies.filter(e=>!e.dead);
+  bosses=bosses.filter(b=>!b.dead);
+  bullets=bullets.filter(b=>!b.dead);
+  enemyBullets=enemyBullets.filter(b=>!b.dead);
+
+  if(player.hp<=0){ running=false; menu.style.display='block'; document.getElementById('bgMusic').pause(); }
+}
+
+// ================= DRAW =================
+function draw(){
+  ctx.clearRect(0,0,W,H);
+
+  // NORMAL DRAW
+  enemies.forEach(e=>{ ctx.fillStyle='#f44'; ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill(); });
+  bosses.forEach(b=>{
+    ctx.fillStyle = b.type==='tank'?'#933':b.type==='rusher'?'#c55':'#59f';
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+    const w=60,h=6; ctx.fillStyle='#000'; ctx.fillRect(b.x-w/2,b.y-b.r-14,w,h);
+    ctx.fillStyle='#0f0'; ctx.fillRect(b.x-w/2,b.y-b.r-14,w*(b.hp/b.maxHp),h);
+  });
+  bullets.forEach(b=>{ ctx.fillStyle='#fff'; ctx.fillRect(b.x,b.y,4,4); });
+  enemyBullets.forEach(b=>{ ctx.fillStyle='#f0f'; ctx.fillRect(b.x,b.y,4,4); });
+
+  let c='#0ef';
+  if(player.skin==='rainbow') c=`hsl(${Date.now()/10%360},100%,60%)`;
+  if(player.skin==='plasma') c=`hsl(${Date.now()/5%360},100%,50%)`;
+  if(player.skin==='gold') c='#ffd700';
+  ctx.fillStyle=c;
+  ctx.beginPath(); ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
+
+  // SNIPER LENS
+  if(player.weapon==='sniper' && mouse.rightDown){
+    const radius = 150;
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(0,0,W,H);
+    ctx.save(); ctx.beginPath(); ctx.arc(player.x,player.y,radius,0,Math.PI*2); ctx.clip();
+    ctx.save();
+    ctx.translate(player.x,player.y); ctx.scale(2,2); ctx.translate(-player.x,-player.y);
+    enemies.forEach(e=>{ ctx.fillStyle='#f44'; ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,Math.PI*2); ctx.fill(); });
+    bosses.forEach(b=>{
+      ctx.fillStyle = b.type==='tank'?'#933':b.type==='rusher'?'#c55':'#59f';
+      ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); ctx.fill();
+      const w=60,h=6; ctx.fillStyle='#000'; ctx.fillRect(b.x-w/2,b.y-b.r-14,w,h);
+      ctx.fillStyle='#0f0'; ctx.fillRect(b.x-w/2,b.y-b.r-14,w*(b.hp/b.maxHp),h);
+    });
+    bullets.forEach(b=>{ ctx.fillStyle='#fff'; ctx.fillRect(b.x,b.y,4,4); });
+    enemyBullets.forEach(b=>{ ctx.fillStyle='#f0f'; ctx.fillRect(b.x,b.y,4,4); });
+    ctx.fillStyle=c; ctx.beginPath(); ctx.arc(player.x,player.y,player.r,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle='red'; ctx.lineWidth=2; ctx.beginPath();
+    ctx.moveTo(player.x-10,player.y); ctx.lineTo(player.x+10,player.y);
+    ctx.moveTo(player.x,player.y-10); ctx.lineTo(player.x,player.y+10); ctx.stroke();
+    ctx.restore();
+  }
+}
+
+function loop(){ update(); draw(); requestAnimationFrame(loop); }
+loop();
+
+// ================= UI =================
+const scoreEl = document.getElementById('score');
+const coinsEl = document.getElementById('coins');
+const hpEl = document.getElementById('hp');
+const menu = document.getElementById('menu');
+const shop = document.getElementById('shop');
+
+shopBtn.onclick = ()=>shop.style.display='block';
+closeShop.onclick = ()=>shop.style.display='none';
+
+upSpeed.onclick=()=>{ if(coins>=20){ coins-=20; player.speed+=0.5; } };
+upFire.onclick=()=>{ if(coins>=25){ coins-=25; player.fireRate=Math.max(5,player.fireRate-2); } };
+upDamage.onclick=()=>{ if(coins>=30){ coins-=30; player.damage++; } };
+upHP.onclick=()=>{ if(coins>=40){ coins-=40; player.maxHp++; player.hp++; } };
+
+function buyWeapon(name,cost){ if(coins>=cost){ coins-=cost; player.weapon=name; } }
+wpPistol.onclick = ()=>buyWeapon('pistol',0);
+wpShotgun.onclick = ()=>buyWeapon('shotgun',120);
+wpLaser.onclick = ()=>buyWeapon('laser',200);
+wpExplosive.onclick = ()=>buyWeapon('explosive',250);
+wpSniper.onclick = ()=>buyWeapon('sniper',3000);
+
+function buySkin(name,cost){ if(coins>=cost){ coins-=cost; player.skin=name; } }
+skinRainbow.onclick = ()=>buySkin('rainbow',150);
+skinPlasma.onclick = ()=>buySkin('plasma',200);
+skinGold.onclick = ()=>buySkin('gold',300);
+
+start.onclick = ()=>{
+  difficulty=document.getElementById('difficulty').value;
+  applyDifficulty();
+  score=0; coins=0; nextBossScore=500;
+  enemies=[]; bosses=[]; bullets=[]; enemyBullets=[];
+  player.hp=player.maxHp; player.x=W/2; player.y=H/2;
+  running=true; menu.style.display='none';
+  document.getElementById('bgMusic').play();
+};
+
+setInterval(()=>{
+  scoreEl.textContent='Score: '+Math.floor(score);
+  coinsEl.textContent='Coins: '+Math.floor(coins);
+  hpEl.textContent='HP: '+player.hp+'/'+player.maxHp;
+},100);
+</script>
+</body>
+</html>
